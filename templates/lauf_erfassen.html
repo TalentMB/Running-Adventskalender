@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Lauf erfassen</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <h1>Kilometer für Türchen {{ tuer.id }} erfassen</h1>
+    <p>Ziel für dieses Türchen: {{ tuer.id }} km erreicht: {{ km_erreicht }} km | Noch **{{ verbleibende_km }} km** übrig</p>
+
+    <form method="POST" action="{{ url_for('lauf_eintragen') }}">
+        <input type="hidden" name="tuer_id" value="{{ tuer.id }}">
+
+        <label for="user_id">Wer ist gelaufen?</label><br>
+        <select name="user_id" id="user_id" required>
+            {% for user in users %}
+                <option value="{{ user.id }}">{{ user.name }}</option>
+            {% endfor %}
+        </select><br><br>
+
+        <label for="kilometer">Gelaufene Kilometer (maximal {{ verbleibende_km }} km):</label><br>
+        <input type="number" step="0.1" name="kilometer" max="{{ verbleibende_km }}" required><br><br>
+
+        <button type="submit">Eintragen</button>
+    </form>
+    <p><a href="{{ url_for('index') }}">Zurück zum Kalender</a></p>
+</body>
+</html>
