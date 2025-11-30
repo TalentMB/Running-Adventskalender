@@ -71,6 +71,18 @@ h1, p { color: #333; }
 }
 .reset-btn:hover { color: darkred; }
 
+.view-only-btn {
+    background-color: #6c757d !important; /* Grau für Ansehen */
+}
+.view-only-btn:hover {
+    background-color: #5a6268 !important;
+}
+
+.read-only-mode {
+    font-weight: bold;
+    padding: 10px;
+}
+
 /* Styling für das Formular in lauf_erfassen.html */
 input[type="number"], select, button { padding: 10px; margin-top: 5px; width: 100%; max-width: 300px; box-sizing: border-box; }
 button { background-color: #4CAF50; color: white; border: none; cursor: pointer; }

@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>Team-Login</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        /* Einfaches CSS für die Umschaltung und Layout */
+        .hidden { display: none; }
+        .team-quick-access {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        .team-actions {
+            display: flex;
+            gap: 10px; /* Abstand zwischen den Buttons */
+        }
+        .view-only-btn { background-color: #6c757d; color: white; }
+        .join-btn { background-color: #007bff; color: white; }
+        .pin-form-container {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #f9f9f9;
+            border: 1px solid #ddd;
+        }
+        .create-team-form {
+            margin-top: 20px;
+            padding: 15px;
+            border: 1px solid #28a745; /* Grüne Farbe für Erstellen */
+        }
+    </style>
+</head>
+<body>
+    <h1>Team-Challenge Adventslauf</h1>
+    <h2>Wählen Sie Ihr Team</h2>
+
+    <!-- Flash Messages -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="flashes {{ category }}">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <!-- Liste der bestehenden Teams (Hauptansicht) -->
+    <div class="existing-teams">
+        <h3>Bestehende Teams:</h3>
+        {% if existing_teams %}
+            {% for team in existing_teams %}
+                <div class="team-quick-access">
+                    <strong>{{ team.name }}</strong>
+
+                    <div class="team-actions">
+                        <!-- Button zum Einblenden des PIN-Formulars -->
+                        <button onclick="togglePinForm('pinForm-{{ team.id }}')" class="team-button join-btn">Beitreten (mit PIN)</button>
+
+                        <!-- Formular zum direkten Ansehen (POST action=view) -->
+                        <form method="POST" action="{{ url_for('team_login') }}">
+                            <input type="hidden" name="team_name" value="{{ team.name }}">
+                            <input type="hidden" name="action" value="view">
+                            <button type="submit" class="team-button view-only-btn">Nur Ansehen</button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- PIN Eingabe Formular (Standardmäßig versteckt) -->
+                <div id="pinForm-{{ team.id }}" class="pin-form-container hidden">
+                    <p>Geben Sie den PIN für **{{ team.name }}** ein, um Schreibrechte zu erhalten:</p>
+                    <form method="POST" action="{{ url_for('team_login') }}">
+                        <input type="hidden" name="team_name" value="{{ team.name }}">
+                        <input type="hidden" name="action" value="join">
+                        <label for="pin_code_{{ team.id }}">PIN:</label>
+                        <input type="text" id="pin_code_{{ team.id }}" name="pin_code" pattern="[0-9]{4}" maxlength="4" required style="width: 100px;">
+                        <button type="submit">Beitreten</button>
+                    </form>
+                </div>
+
+            {% endfor %}
+        {% else %}
+            <p>Es sind noch keine Teams vorhanden. Bitte erstellen Sie das erste Team.</p>
+        {% endif %}
+    </div>
+
+    <!-- Bereich zum neuen Team erstellen -->
+    <hr>
+    <button onclick="toggleForm('createTeamForm')">Neues Team erstellen</button>
+
+    <div id="createTeamForm" class="create-team-form hidden">
+        <h3>Neues Team erstellen</h3>
+        <p>Wählen Sie einen Namen und einen 4-stelligen PIN. Sie erhalten sofort Schreibrechte.</p>
+
+        <form method="POST" action="{{ url_for('team_login') }}">
+            <label for="new_team_name">Teamname:</label><br>
+            <input type="text" id="new_team_name" name="team_name" placeholder="Name" required><br><br>
+
+            <label for="new_pin_code">PIN-Code (4 Ziffern):</label><br>
+            <input type="text" id="new_pin_code" name="pin_code" pattern="[0-9]{4}" maxlength="4" required placeholder="4-stelliger PIN"><br><br>
+
+            <!-- action 'join' wird auch für das Erstellen eines neuen Teams verwendet -->
+            <input type="hidden" name="action" value="join">
+            <button type="submit">Team erstellen</button>
+        </form>
+    </div>
+
+    <script>
+        // JavaScript zum Ein- und Ausblenden der Formulare
+        function toggleForm(formId) {
+            var form = document.getElementById(formId);
+            form.classList.toggle('hidden');
+        }
+
+        function togglePinForm(formId) {
+            // Optional: Alle anderen PIN-Formulare ausblenden, bevor das neue eingeblendet wird
+            document.querySelectorAll('.pin-form-container').forEach(function(el) {
+                if (el.id !== formId) {
+                    el.classList.add('hidden');
+                }
+            });
+            toggleForm(formId);
+        }
+    </script>
+
+</body>
+</html>

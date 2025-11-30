@@ -4,16 +4,20 @@
     <meta charset="UTF-8">
     <title>Team-Challenge Adventslauf</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <!-- JavaScript für die Bestätigungsabfrage -->
     <script>
-        function confirmReset(tuerId) {
-            return confirm("Sind Sie sicher, dass Sie alle Einträge für Türchen " + tuerId + " zurücksetzen möchten? Dies kann nicht rückgängig gemacht werden.");
+        function confirmReset(tuerNummer) {
+            return confirm("Sind Sie sicher, dass Sie alle Einträge für Türchen " + tuerNummer + " zurücksetzen möchten? Dies kann nicht rückgängig gemacht werden.");
         }
     </script>
 </head>
 <body>
     <h1>Team-Challenge Adventslauf (300km)</h1>
     <p>Gesamtfortschritt: {{ gesamt_gelaufen }} km von {{ gesamt_ziel }} km</p>
+    <p>Aktuelles Team: **{{ team_name }}** (<a href="{{ url_for('logout') }}">Team wechseln</a>)</p>
+
+    {% if not can_write %}
+        <div class="read-only-mode flashes error">Sie haben nur Lesezugriff. Aktionen sind nicht möglich.</div>
+    {% endif %}
 
     <!-- Legende der Benutzer -->
     <div class="legende">
@@ -25,15 +29,15 @@
         {% endfor %}
     </div>
 
-    <!-- Formular zum Hinzufügen neuer Nutzer -->
-    <div class="nutzer-hinzufuegen">
-        {% if users|length < 3 %}
-        <form method="POST" action="{{ url_for('index') }}">
-            <input type="text" name="neuer_nutzer_name" placeholder="Name neues Teammitglied" required>
-            <button type="submit">Hinzufügen</button>
-        </form>
-        {% endif %}
-    </div>
+    <!-- Formular zum Hinzufügen neuer Nutzer (nur sichtbar für Schreiber) -->
+    {% if users|length < 3 and can_write %}
+        <div class="nutzer-hinzufuegen">
+            <form method="POST" action="{{ url_for('add_user') }}">
+                <input type="text" name="neuer_nutzer_name" placeholder="Name neues Teammitglied" required>
+                <button type="submit">Hinzufügen</button>
+            </form>
+        </div>
+    {% endif %}
 
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
@@ -46,11 +50,17 @@
     <div class="kalender-container">
         {% for tuer in tuer_liste %}
             <div class="tuer {{ 'erledigt' if tuer.ist_erledigt else '' }}">
-                <a href="{{ url_for('lauf_erfassen_formular', tuer_id=tuer.id) }}" class="tuer-inhalt-link">
-                    <span class="tuer-nummer">{{ tuer.id }} km Ziel</span>
+                <!-- Link zur Eingabemaske, falls man Schreibrechte hat -->
+                {% if can_write %}
+                    <a href="{{ url_for('lauf_erfassen_formular', tuer_db_id=tuer.id) }}" class="tuer-inhalt-link">
+                {% else %}
+                    <!-- Wenn keine Schreibrechte, ist das Türchen kein Link -->
+                    <div class="tuer-inhalt-link">
+                {% endif %}
+
+                    <span class="tuer-nummer">{{ tuer.tuer_nummer }} km Ziel</span>
                     <span class="tuer-fortschritt">Erreicht: {{ tuer.erreicht_km }} km</span>
 
-                    <!-- Der farbige Fortschrittsbalken -->
                     <div class="fortschritts-balken-container">
                         {% for beitrag in tuer.beitraege %}
                             <div class="fortschritts-segment" style="width: {{ beitrag.prozent }}%; background-color: {{ beitrag.farbe }};"
@@ -61,11 +71,17 @@
                     {% if tuer.ist_erledigt %}
                         <span class="haken">✅</span>
                     {% endif %}
-                </a>
 
-                <!-- Reset Button (POST Request, um Sicherheitsabfrage zu gewährleisten) -->
-                {% if tuer.erreicht_km > 0 %}
-                <form action="{{ url_for('tuer_zuruecksetzen', tuer_id=tuer.id) }}" method="POST" onsubmit="return confirmReset({{ tuer.id }})" class="reset-form">
+                {% if can_write %}
+                    </a>
+                {% else %}
+                    </div>
+                {% endif %}
+
+
+                <!-- Reset Button (nur sichtbar für Schreiber, wenn KM > 0) -->
+                {% if tuer.erreicht_km > 0 and can_write %}
+                <form action="{{ url_for('tuer_zuruecksetzen', tuer_db_id=tuer.id) }}" method="POST" onsubmit="return confirmReset({{ tuer.tuer_nummer }})" class="reset-form">
                     <button type="submit" class="reset-btn" title="Türchen zurücksetzen">❌</button>
                 </form>
                 {% endif %}

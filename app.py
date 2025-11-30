@@ -1,42 +1,53 @@
-from flask import Flask, render_template, request, redirect, url_for, flash
+from flask import Flask, render_template, request, redirect, url_for, flash, session, abort
 from flask_sqlalchemy import SQLAlchemy
 import datetime
 from sqlalchemy import func
 import os
+# NEU: Import für sicheres PIN-Hashing
+from werkzeug.security import generate_password_hash, check_password_hash
 
 # --- App Konfiguration ---
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///team_challenge.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///multi_team_challenge.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.secret_key = 'Ihr_geheimer_schluessel'  # Für Flash-Nachrichten benötigt
+app.secret_key = 'Ihr_geheimer_schluessel'
+
+# Session Konfiguration (standardmäßig nach Browser-Schluss gelöscht)
+app.config.update(SESSION_COOKIE_SAMESITE="Lax", SESSION_COOKIE_SECURE=False)
 db = SQLAlchemy(app)
 
 
 # --- Datenbank Modelle ---
 
-# Modell für die Benutzer (Amelie, Lazo, etc.)
-class User(db.Model):
+class Team(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(50), nullable=False, unique=True)
-    # Zugehörige Farbe für die Visualisierung (Hex-Code)
+    # pin_code = db.Column(db.String(4), nullable=True) # ALT: Entfernt
+    pin_code_hash = db.Column(db.String(128), nullable=True)  # NEU: Für den Hash
+    users = db.relationship('User', backref='team', lazy=True)
+    tuerchen_liste = db.relationship('Tuerchen', backref='team', lazy=True)
+
+
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(50), nullable=False)
     farbe = db.Column(db.String(7), nullable=False)
+    team_id = db.Column(db.Integer, db.ForeignKey('team.id'), nullable=False)
 
 
-# Modell für die 24 Türchen (ID 1-24)
 class Tuerchen(db.Model):
-    id = db.Column(db.Integer, primary_key=True)  # ID ist auch der Ziel-KM-Wert
-    # Läufe, die zu diesem Türchen gehören
+    id = db.Column(db.Integer, primary_key=True)
+    tuer_nummer = db.Column(db.Integer, nullable=False)
+    team_id = db.Column(db.Integer, db.ForeignKey('team.id'), nullable=False)
     laeufe = db.relationship('SharedLauf', backref='tuerchen', lazy=True)
 
 
-# Modell für jeden einzelnen erfassten Lauf eines Benutzers
 class SharedLauf(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     kilometer = db.Column(db.Float, nullable=False)
     datum = db.Column(db.DateTime, default=datetime.datetime.utcnow)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     tuerchen_id = db.Column(db.Integer, db.ForeignKey('tuerchen.id'), nullable=False)
-    user = db.relationship('User', backref='shared_laeufe')
 
 
 # --- Datenbank Initialisierung ---
@@ -44,12 +55,12 @@ def init_db():
     with app.app_context():
         db.create_all()
 
-        # Benutzer werden NICHT mehr vordefiniert, sondern über das Frontend-Formular hinzugefügt.
 
-        # Türchen anlegen (ID 1-24), falls nicht vorhanden
-        if Tuerchen.query.count() == 0:
+def setup_team_tuerchen(team_id):
+    with app.app_context():
+        if Tuerchen.query.filter_by(team_id=team_id).count() == 0:
             for i in range(1, 25):
-                t = Tuerchen(id=i)
+                t = Tuerchen(tuer_nummer=i, team_id=team_id)
                 db.session.add(t)
             db.session.commit()
 
@@ -59,38 +70,90 @@ init_db()
 
 # --- Backend Routen (Logik) ---
 
-@app.route('/', methods=['GET', 'POST'])
-def index():
-    if request.method == 'POST' and 'neuer_nutzer_name' in request.form:
-        name = request.form['neuer_nutzer_name']
-        if User.query.filter_by(name=name).first():
-            flash("Name existiert bereits.", "error")
-        elif User.query.count() >= 3:
-            flash("Maximale Teamgröße (3 Personen) erreicht.", "error")
-        else:
-            # Farben dynamisch zuweisen (Hex-Codes für bessere Kompatibilität)
-            if User.query.count() == 0:
-                farbe = '#007bff'  # Blau
-            elif User.query.count() == 1:
-                farbe = '#28a745'  # Grün
-            else:
-                farbe = '#ff9800'  # Orange
+@app.route('/logout')
+def logout():
+    # Löscht die Team-ID und die Schreibrechte aus der Session
+    session.pop('team_id', None)
+    session.pop('can_write', None)
+    flash("Team erfolgreich gewechselt.", "success")
+    return redirect(url_for('team_login'))
 
-            neuer_user = User(name=name, farbe=farbe)
-            db.session.add(neuer_user)
+
+@app.route('/team', methods=['GET', 'POST'])
+def team_login():
+    if request.method == 'POST':
+        team_name = request.form.get('team_name')
+        pin_code_eingabe = request.form.get('pin_code')
+        action = request.form.get('action')  # 'join' oder 'view'
+
+        if not team_name:
+            flash("Teamname benötigt.", "error")
+            return redirect(url_for('team_login'))
+
+        team = Team.query.filter_by(name=team_name).first()
+
+        if team:
+            # Team existiert
+            if action == 'join':
+                # NEU: PIN-Prüfung mit Hashing
+                if team.pin_code_hash and check_password_hash(team.pin_code_hash, pin_code_eingabe):
+                    session['team_id'] = team.id
+                    session['can_write'] = True  # Schreibrechte
+                    flash(f"Willkommen zurück bei Team {team_name}!", "success")
+                else:
+                    flash("Falscher PIN-Code oder PIN benötigt, um beizutreten.", "error")
+                    return redirect(url_for('team_login'))
+            elif action == 'view':
+                session['team_id'] = team.id
+                session['can_write'] = False  # Nur Leserechte
+                flash(f"Sie besuchen Team {team_name} (Nur Lesezugriff).", "success")
+
+        else:
+            # Neues Team erstellen (nur mit Action 'join' und PIN möglich)
+            if action != 'join' or not pin_code_eingabe or len(pin_code_eingabe) != 4:
+                flash("Für ein neues Team wird ein 4-stelliger PIN und die Aktion 'Beitreten' benötigt.", "error")
+                return redirect(url_for('team_login'))
+
+            # NEU: PIN hashen vor dem Speichern
+            hashed_pin = generate_password_hash(pin_code_eingabe)
+            neues_team = Team(name=team_name, pin_code_hash=hashed_pin)
+            db.session.add(neues_team)
             db.session.commit()
-            flash(f"Nutzer {name} hinzugefügt.", "success")
+            session['team_id'] = neues_team.id
+            session['can_write'] = True  # Schreibrechte für den Ersteller
+            setup_team_tuerchen(neues_team.id)
+            flash(f"Neues Team {team_name} erstellt. PIN: {pin_code_eingabe}", "success")
+
         return redirect(url_for('index'))
 
-    alle_tuerchen = Tuerchen.query.order_by(Tuerchen.id).all()
-    gesamt_ziel = sum(tuer.id for tuer in alle_tuerchen)
-    gesamt_gelaufen = db.session.query(db.func.sum(SharedLauf.kilometer)).scalar() or 0
-    users = User.query.all()
+    # GET-Request: Alle bestehenden Teams abfragen und an das Template übergeben
+    existing_teams = Team.query.all()
+    return render_template('team_login.html', existing_teams=existing_teams)
+
+
+@app.route('/')
+def index():
+    team_id = session.get('team_id')
+    if not team_id: return redirect(url_for('team_login'))
+    team = Team.query.get(team_id)
+    if not team:
+        session.pop('team_id', None);
+        session.pop('can_write', None)
+        flash("Ihr Team existiert nicht mehr.", "error")
+        return redirect(url_for('team_login'))
+
+    can_write = session.get('can_write', False)
+
+    alle_tuerchen = Tuerchen.query.filter_by(team_id=team_id).order_by(Tuerchen.tuer_nummer).all()
+    gesamt_ziel = sum(tuer.tuer_nummer for tuer in alle_tuerchen)
+    gesamt_gelaufen = db.session.query(db.func.sum(SharedLauf.kilometer)).filter(
+        SharedLauf.tuerchen.has(team_id=team_id)).scalar() or 0
+    users = User.query.filter_by(team_id=team_id).all()
 
     tuer_daten = []
     for tuer in alle_tuerchen:
         km_erreicht = db.session.query(db.func.sum(SharedLauf.kilometer)).filter_by(tuerchen_id=tuer.id).scalar() or 0
-        ziel_erreicht = km_erreicht >= tuer.id
+        ziel_erreicht = km_erreicht >= tuer.tuer_nummer
 
         beitraege = []
         for user in users:
@@ -103,7 +166,8 @@ def index():
 
         tuer_daten.append({
             'id': tuer.id,
-            'ziel_km': tuer.id,
+            'tuer_nummer': tuer.tuer_nummer,
+            'ziel_km': tuer.tuer_nummer,
             'erreicht_km': km_erreicht,
             'ist_erledigt': ziel_erreicht,
             'beitraege': beitraege
@@ -113,18 +177,53 @@ def index():
                            tuer_liste=tuer_daten,
                            gesamt_ziel=gesamt_ziel,
                            gesamt_gelaufen=gesamt_gelaufen,
-                           users=users)
+                           users=users,
+                           team_name=team.name,
+                           can_write=can_write)
 
 
-@app.route('/lauf_erfassen_formular/<int:tuer_id>', methods=['GET'])
-def lauf_erfassen_formular(tuer_id):
-    tuer = Tuerchen.query.get_or_404(tuer_id)
-    users = User.query.all()
-    km_erreicht = db.session.query(db.func.sum(SharedLauf.kilometer)).filter_by(tuerchen_id=tuer.id).scalar() or 0
-    verbleibende_km = max(0, tuer.id - km_erreicht)
+@app.route('/add_user', methods=['POST'])
+def add_user():
+    if not session.get('can_write'): abort(403)  # NEU: Rechteprüfung mit abort(403)
+    team_id = session.get('team_id')
+    if not team_id: return redirect(url_for('team_login'))
+    # ... (Rest der Logik)
+    name = request.form['neuer_nutzer_name']
+    if User.query.filter_by(name=name, team_id=team_id).first():
+        flash("Name existiert bereits in diesem Team.", "error")
+    elif User.query.filter_by(team_id=team_id).count() >= 3:
+        flash("Maximale Teamgröße (3 Personen) erreicht.", "error")
+    else:
+        if User.query.filter_by(team_id=team_id).count() == 0:
+            farbe = '#007bff'
+        elif User.query.filter_by(team_id=team_id).count() == 1:
+            farbe = '#28a745'
+        else:
+            farbe = '#ff9800'
+
+        neuer_user = User(name=name, farbe=farbe, team_id=team_id)
+        db.session.add(neuer_user)
+        db.session.commit()
+        flash(f"Nutzer {name} zu Team {Team.query.get(team_id).name} hinzugefügt.", "success")
+
+    return redirect(url_for('index'))
+
+
+@app.route('/lauf_erfassen_formular/<int:tuer_db_id>', methods=['GET'])
+def lauf_erfassen_formular(tuer_db_id):
+    if not session.get('can_write'): abort(403)  # NEU: Rechteprüfung mit abort(403)
+    team_id = session.get('team_id')
+    if not team_id: return redirect(url_for('team_login'))
+
+    tuer = Tuerchen.query.get_or_404(tuer_db_id)
+    if tuer.team_id != team_id: abort(403)  # Sicherstellen, dass die Tür zum Team gehört
+
+    users = User.query.filter_by(team_id=team_id).all()
+    km_erreicht = db.session.query(db.func.sum(SharedLauf.kilometer)).filter_by(tuerchen_id=tuer_db_id).scalar() or 0
+    verbleibende_km = max(0, tuer.tuer_nummer - km_erreicht)
 
     if verbleibende_km == 0:
-        flash(f"Türchen {tuer_id} ist bereits voll gelaufen!", "error")
+        flash(f"Türchen {tuer.tuer_nummer} ist bereits voll gelaufen!", "error")
         return redirect(url_for('index'))
 
     return render_template('lauf_erfassen.html',
@@ -136,23 +235,30 @@ def lauf_erfassen_formular(tuer_id):
 
 @app.route('/lauf_eintragen', methods=['POST'])
 def lauf_eintragen():
+    if not session.get('can_write'): abort(403)  # NEU: Rechteprüfung mit abort(403)
+    team_id = session.get('team_id')
+    if not team_id: return redirect(url_for('team_login'))
+
     user_id = request.form.get('user_id')
-    tuer_id = request.form.get('tuer_id')
+    tuer_db_id = request.form.get('tuer_id')
+
     try:
         kilometer = float(request.form.get('kilometer'))
     except (ValueError, TypeError):
         flash("Ungültige Kilometer-Angabe.", "error")
-        return redirect(url_for('lauf_erfassen_formular', tuer_id=tuer_id))
+        # Korrekte Weiterleitung zurück zum Formular
+        return redirect(url_for('lauf_erfassen_formular', tuer_db_id=tuer_db_id))
 
-    km_erreicht = db.session.query(db.func.sum(SharedLauf.kilometer)).filter_by(tuerchen_id=tuer_id).scalar() or 0
-    ziel_km = Tuerchen.query.get(tuer_id).id
+    km_erreicht = db.session.query(db.func.sum(SharedLauf.kilometer)).filter_by(tuerchen_id=tuer_db_id).scalar() or 0
+    ziel_km = Tuerchen.query.get(tuer_db_id).tuer_nummer
 
     if km_erreicht + kilometer > ziel_km:
         flash(f"Fehler: Es können nur noch maximal {ziel_km - km_erreicht:.1f} km eingetragen werden.", "error")
-        return redirect(url_for('lauf_erfassen_formular', tuer_id=tuer_id))
+        # Korrekte Weiterleitung zurück zum Formular
+        return redirect(url_for('lauf_erfassen_formular', tuer_db_id=tuer_db_id))
 
-    if user_id and tuer_id and kilometer > 0:
-        neuer_lauf = SharedLauf(kilometer=kilometer, user_id=user_id, tuerchen_id=tuer_id)
+    if user_id and tuer_db_id and kilometer > 0:
+        neuer_lauf = SharedLauf(kilometer=kilometer, user_id=user_id, tuerchen_id=tuer_db_id)
         db.session.add(neuer_lauf)
         db.session.commit()
         flash("Lauf erfolgreich eingetragen!", "success")
@@ -162,19 +268,27 @@ def lauf_eintragen():
     return redirect(url_for('index'))
 
 
-@app.route('/tuer_zuruecksetzen/<int:tuer_id>', methods=['POST'])
-def tuer_zuruecksetzen(tuer_id):
-    # Diese Funktion löscht ALLE Läufe, die diesem Türchen zugeordnet sind
+@app.route('/tuer_zuruecksetzen/<int:tuer_db_id>', methods=['POST'])
+def tuer_zuruecksetzen(tuer_db_id):
+    if not session.get('can_write'): abort(403)  # NEU: Rechteprüfung mit abort(403)
+    team_id = session.get('team_id')
+    if not team_id: return redirect(url_for('team_login'))
+
+    # Optional: Prüfen, ob die Tür zum Team gehört, bevor gelöscht wird
+    tuer = Tuerchen.query.get_or_404(tuer_db_id)
+    if tuer.team_id != team_id: abort(403)
+
     with app.app_context():
-        laeufe_zum_loeschen = SharedLauf.query.filter_by(tuerchen_id=tuer_id).all()
-        for lauf in laeufe_zum_loeschen:
-            db.session.delete(lauf)
+        # Bessere Methode zum Löschen:
+        SharedLauf.query.filter_by(tuerchen_id=tuer_db_id).delete()
         db.session.commit()
-        flash(f"Alle Läufe für Türchen {tuer_id} wurden zurückgesetzt.", "success")
+        flash(f"Alle Läufe für dieses Türchen wurden zurückgesetzt.", "success")
 
     return redirect(url_for('index'))
 
 
 # --- App Start ---
 if __name__ == '__main__':
+    # Standard Flask Dev Server Start
     app.run(debug=True)
+
