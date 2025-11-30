@@ -2,43 +2,12 @@
 <html lang="de">
 <head>
     <meta charset="UTF-8">
-    <title>Team-Challenge Adventslauf</title>
+    <title>TMB-Running-Adventskalender</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <script>
-        function confirmReset(tuerNummer) {
-            return confirm("Sind Sie sicher, dass Sie alle Einträge für Türchen " + tuerNummer + " zurücksetzen möchten? Dies kann nicht rückgängig gemacht werden.");
-        }
-    </script>
 </head>
 <body>
-    <h1>Team-Challenge Adventslauf (300km)</h1>
-    <p>Gesamtfortschritt: {{ gesamt_gelaufen }} km von {{ gesamt_ziel }} km</p>
-    <p>Aktuelles Team: **{{ team_name }}** (<a href="{{ url_for('logout') }}">Team wechseln</a>)</p>
 
-    {% if not can_write %}
-        <div class="read-only-mode flashes error">Sie haben nur Lesezugriff. Aktionen sind nicht möglich.</div>
-    {% endif %}
-
-    <!-- Legende der Benutzer -->
-    <div class="legende">
-        {% for user in users %}
-            <span class="legende-item">
-                <span class="farb-box" style="background-color: {{ user.farbe }};"></span>
-                {{ user.name }}
-            </span>
-        {% endfor %}
-    </div>
-
-    <!-- Formular zum Hinzufügen neuer Nutzer (nur sichtbar für Schreiber) -->
-    {% if users|length < 3 and can_write %}
-        <div class="nutzer-hinzufuegen">
-            <form method="POST" action="{{ url_for('add_user') }}">
-                <input type="text" name="neuer_nutzer_name" placeholder="Name neues Teammitglied" required>
-                <button type="submit">Hinzufügen</button>
-            </form>
-        </div>
-    {% endif %}
-
+    <!-- Flash Messages -->
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}
         {% for category, message in messages %}
@@ -47,47 +16,92 @@
       {% endif %}
     {% endwith %}
 
-    <div class="kalender-container">
+    <div class="header-container">
+        <h1>TMB-Running-Adventskalender</h1>
+        <a href="{{ url_for('logout') }}" class="btn view-only-btn">Abmelden / Team wechseln</a>
+    </div>
+
+    <div class="dashboard-stats">
+        <h4>Aktuelles Team: {{ team_name }}</h4>
+        <!-- Gesamt gelaufen Text entfernt -->
+
+        <h4>Teammitglieder:</h4>
+        <div class="user-list">
+            {% for user in users %}
+                <span style="color: {{ user.farbe }}; font-weight: bold;">● {{ user.name }}</span>
+            {% endfor %}
+        </div>
+
+        {% if can_write %}
+            <!-- Formular zum Nutzer hinzufügen -->
+            <form method="POST" action="{{ url_for('add_user') }}" style="margin-top: 15px;">
+                <input type="text" name="neuer_nutzer_name" placeholder="Name des neuen Nutzers" required>
+                <button type="submit">Nutzer hinzufügen</button>
+            </form>
+        {% endif %}
+    </div>
+
+
+    <!-- Der Kalenderbereich -->
+    <h2>Der Adventskalender</h2>
+
+    <div class="tuer-grid">
         {% for tuer in tuer_liste %}
-            <div class="tuer {{ 'erledigt' if tuer.ist_erledigt else '' }}">
-                <!-- Link zur Eingabemaske, falls man Schreibrechte hat -->
-                {% if can_write %}
-                    <a href="{{ url_for('lauf_erfassen_formular', tuer_db_id=tuer.id) }}" class="tuer-inhalt-link">
-                {% else %}
-                    <!-- Wenn keine Schreibrechte, ist das Türchen kein Link -->
-                    <div class="tuer-inhalt-link">
-                {% endif %}
+            <div class="tuer-card {% if tuer.ist_erledigt %}tuer-erledigt{% endif %}"
+                 data-total-km="{{ tuer.ziel_km }}"
+                 data-reached-km="{{ tuer.erreicht_km | round(1) }}">
 
-                    <span class="tuer-nummer">{{ tuer.tuer_nummer }} km Ziel</span>
-                    <span class="tuer-fortschritt">Erreicht: {{ tuer.erreicht_km }} km</span>
-
-                    <div class="fortschritts-balken-container">
-                        {% for beitrag in tuer.beitraege %}
-                            <div class="fortschritts-segment" style="width: {{ beitrag.prozent }}%; background-color: {{ beitrag.farbe }};"
-                                 title="{{ beitrag.user_name }}: {{ beitrag.km }} km"></div>
-                        {% endfor %}
-                    </div>
-
-                    {% if tuer.ist_erledigt %}
-                        <span class="haken">✅</span>
-                    {% endif %}
-
-                {% if can_write %}
+                <div class="tuer-content-wrapper">
+                    <!-- Linke Seite: Kreisdiagramm (Link zur Eingabe) -->
+                    <a href="{{ url_for('lauf_erfassen_formular', tuer_db_id=tuer.id) }}" class="tuer-nummer-kreis" title="Klicken zum Kilometer eintragen">
+                        {{ tuer.tuer_nummer }}
                     </a>
-                {% else %}
+
+                    <!-- Rechte Seite: Hier zeigen wir nur die individuellen Beiträge als Text an -->
+                    <div class="tuer-actions-side">
+                        <div class="tuer-beitraege-text">
+                            <!-- Hier iterieren wir durch die Beiträge und zeigen sie an -->
+                            {% for beitrag in tuer.beitraege %}
+                                <div style="color: {{ beitrag.farbe }};">
+                                    {{ beitrag.user_name }}: {{ beitrag.km | round(1) }} km
+                                </div>
+                            {% endfor %}
+
+                            <!-- Die Gesamt-Anzeige innerhalb des Türchens wurde entfernt -->
+                        </div>
+
+                        {% if can_write and tuer.erreicht_km > 0 %}
+                            <!-- Rotes X zum Zurücksetzen -->
+                            <form method="POST" action="{{ url_for('tuer_zuruecksetzen', tuer_db_id=tuer.id) }}">
+                                <button type="submit" class="reset-btn" title="Türchen zurücksetzen (Alle Läufe löschen)">
+                                    ✖
+                                </button>
+                            </form>
+                        {% endif %}
                     </div>
-                {% endif %}
-
-
-                <!-- Reset Button (nur sichtbar für Schreiber, wenn KM > 0) -->
-                {% if tuer.erreicht_km > 0 and can_write %}
-                <form action="{{ url_for('tuer_zuruecksetzen', tuer_db_id=tuer.id) }}" method="POST" onsubmit="return confirmReset({{ tuer.tuer_nummer }})" class="reset-form">
-                    <button type="submit" class="reset-btn" title="Türchen zurücksetzen">❌</button>
-                </form>
-                {% endif %}
-
+                </div>
             </div>
         {% endfor %}
     </div>
+
+    <!-- Das Skript für den Kreis beibehalten -->
+    <script>
+        document.addEventListener('DOMContentLoaded', (event) => {
+            document.querySelectorAll('.tuer-card').forEach(card => {
+                const totalKm = parseFloat(card.dataset.totalKm);
+                const reachedKm = parseFloat(card.dataset.reachedKm);
+
+                // 1. Logik für den Kreis (Gesamtfortschritt Rot/Grün)
+                const kreis = card.querySelector('.tuer-nummer-kreis');
+                const progress = (reachedKm / totalKm) || 0;
+                const color = progress >= 1 ? '#28a745' : '#FF4500';
+                const percentage = progress * 100;
+                const gradientStringKreis = `conic-gradient(${color} 0% ${percentage}%, #eee ${percentage}% 100%)`;
+                kreis.style.backgroundImage = gradientStringKreis;
+                card.title = `Erreicht: ${reachedKm} km von ${totalKm} km`;
+            });
+        });
+    </script>
+
 </body>
 </html>
