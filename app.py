@@ -2,12 +2,24 @@ from flask import Flask, render_template, request, redirect, url_for, flash, ses
 from flask_sqlalchemy import SQLAlchemy
 import datetime
 from sqlalchemy import func
-import os
+import os # Importiere das os-Modul, um Umgebungsvariablen zu lesen
 from werkzeug.security import generate_password_hash, check_password_hash
 
 # --- App Konfiguration ---
 app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///multi_team_challenge.db'
+
+# NEUE DATENBANK-KONFIGURATION START
+database_url = os.environ.get('DATABASE_URL')
+
+if database_url:
+    # SQLAlchemy erwartet postgresql:// Schema, Render liefert oft postgres://
+    database_url = database_url.replace("postgres://", "postgresql://", 1)
+    app.config['SQLALCHEMY_DATABASE_URI'] = database_url
+else:
+    # Fallback für lokale Entwicklung mit SQLite
+    app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///multi_team_challenge.db'
+# NEUE DATENBANK-KONFIGURATION END
+
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.secret_key = 'Ihr_geheimer_schluessel'
 
@@ -62,8 +74,8 @@ def setup_team_tuerchen(team_id):
                 db.session.add(t)
             db.session.commit()
 
-
-init_db()
+# Wir rufen init_db() hier nicht automatisch auf, da wir den Shell-Befehl auf Render nutzen.
+# init_db()
 
 
 # --- Backend Routen (Logik) ---
@@ -203,7 +215,6 @@ def add_user():
 
     return redirect(url_for('index'))
 
-
 @app.route('/lauf_erfassen_formular/<int:tuer_db_id>', methods=['GET'])
 def lauf_erfassen_formular(tuer_db_id):
     if not session.get('can_write'): abort(403)
@@ -280,4 +291,8 @@ def tuer_zuruecksetzen(tuer_db_id):
 
 # --- App Start ---
 if __name__ == '__main__':
+    # Wenn Sie lokal debuggen, erstellt dieser Block die SQLite-DB
+    with app.app_context():
+        db.create_all()
     app.run(debug=True)
+
